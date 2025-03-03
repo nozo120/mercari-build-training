@@ -1,17 +1,19 @@
 import os
 import logging
 import pathlib
-from fastapi import FastAPI, Form, HTTPException, Depends
+from fastapi import FastAPI, Form, HTTPException, Depends, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import sqlite3
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
-
+import json
+import hashlib
 
 # Define the path to the images & sqlite3 database
 images = pathlib.Path(__file__).parent.resolve() / "images"
 db = pathlib.Path(__file__).parent.resolve() / "db" / "mercari.sqlite3"
+items_file = pathlib.Path(__file__).parent.resolve() / "items.json"
 
 
 def get_db():
@@ -56,6 +58,7 @@ class HelloResponse(BaseModel):
     message: str
 
 
+
 @app.get("/", response_model=HelloResponse)
 def hello():
     return HelloResponse(**{"message": "Hello, world!"})
@@ -63,25 +66,39 @@ def hello():
 
 class AddItemResponse(BaseModel):
     message: str
-
+@app.get("/items")
+def get_items():
+    try:
+        with open("items.json", "r") as file:
+            data = json.load(file)
+        return {"items": data.get("items", [])}
+    except Exception as e:
+        logger.error(f"Error reading items.json: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error reading item data")
+    
 
 # add_item is a handler to add a new item for POST /items .
 @app.post("/items", response_model=AddItemResponse)
-def add_item(
+async def add_item(
     name: str = Form(...),
     category: str = Form(...),
+    image: UploadFile = File(...), 
     db: sqlite3.Connection = Depends(get_db),
 ):
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
+    
+    # hash and save the image
+    image_name = await hash_and_save_image(image)
+    item = Item(name=name, category=category, image_name=image_name)
+    insert_item(item)
+    return AddItemResponse(message=f"Item received: {name}")
 
-    insert_item(Item(name=name, category=category))
-    return AddItemResponse(**{"message": f"item received: {name}"})
-
+    
 
 # get_image is a handler to return an image for GET /images/{filename} .
 @app.get("/image/{image_name}")
-async def get_image(image_name):
+async def get_image(image_name:str):
     # Create image path
     image = images / image_name
 
@@ -90,7 +107,7 @@ async def get_image(image_name):
 
     if not image.exists():
         logger.debug(f"Image not found: {image}")
-        image = images / "default.jpg"
+        image = images / "no_image.jpg"
 
     return FileResponse(image)
 
@@ -98,8 +115,61 @@ async def get_image(image_name):
 class Item(BaseModel):
     name: str
     category: str
+    image: str 
 
+# hash the image file
+async def hash_and_save_image(image: UploadFile):
+    if not image.filename.endswith(".jpg"):
+        raise HTTPException(status_code=400, detail="Image path does not end with .jpg")
+
+    # create an instance of a hash function
+    sha256 = hashlib.sha256()
+
+    # get the binary data of the uploaded image
+    contents = await image.read()
+
+    # perform a hash calculation
+    sha256.update(contents)
+
+    # rename the file to a hash value
+    image_name = f"{sha256.hexdigest()}.jpg"
+
+    # save
+    image_path = images / image_name
+    with open(image_path, "wb") as f:
+        f.write(contents)
+
+    return image_name
 
 def insert_item(item: Item):
-    # STEP 4-1: add an implementation to store an item
-    pass
+        if not items_file.exists():
+            with open(items_file, "w") as file:
+                json.dump({"items": []}, file, indent=4) 
+        
+        # load the items.json file
+        with open(items_file, "r") as file:
+                data = json.load(file)
+
+        # add a new item to the "items" array
+        data["items"].append({"name": item.name, "category": item.category,"image_name": item.image_name})
+    
+        # save the updated data to items.json
+        with open(items_file, "w") as file:
+            json.dump(data, file, indent=4)
+        
+
+@app.get("/items/{item_id}", response_model=Item)
+def get_item(item_id: int):
+    items = get_items()["items"] 
+
+    # Check if the item_id is valid
+    if item_id < 1 or item_id > len(items):
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    # Get the item at the specified index (item_id - 1 because list indexing starts at 0)
+    item = items[item_id - 1]
+    return item
+    
+
+           
+    
