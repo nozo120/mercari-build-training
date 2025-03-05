@@ -12,9 +12,13 @@ import hashlib
 
 # Define the path to the images & sqlite3 database
 images = pathlib.Path(__file__).parent.resolve() / "images"
+items_file = pathlib.Path(__file__).parent.resolve() / "db" / "items.json"
 db = pathlib.Path(__file__).parent.resolve() / "db" / "mercari.sqlite3"
-items_file = pathlib.Path(__file__).parent.resolve() / "items.json"
 
+
+# Define the path to the db folder and create it if it doesn't exist
+db_folder = pathlib.Path(__file__).parent.resolve() / "db"
+db_folder.mkdir(parents=True, exist_ok=True)
 
 def get_db():
     if not db.exists():
@@ -43,7 +47,7 @@ app = FastAPI(lifespan=lifespan)
 
 logger = logging.getLogger("uvicorn")
 logger.level = logging.INFO
-images = pathlib.Path(__file__).parent.resolve() / "images"
+
 origins = [os.environ.get("FRONT_URL", "http://localhost:3000")]
 app.add_middleware(
     CORSMiddleware,
@@ -68,9 +72,15 @@ class AddItemResponse(BaseModel):
     message: str
 @app.get("/items")
 def get_items():
+    if not items_file.exists():  # ファイルがない場合の処理を追加
+        logger.warning(f"{items_file} not found. Creating an empty items list.")
+        return {"items": []}
+
     try:
-        with open("items.json", "r") as file:
+        with open(items_file, "r") as file:
             data = json.load(file)
+        if not data.get("items"):
+            return {"items": [], "message": "No items available."}
         return {"items": data.get("items", [])}
     except Exception as e:
         logger.error(f"Error reading items.json: {str(e)}")
@@ -142,13 +152,15 @@ async def hash_and_save_image(image: UploadFile):
     return image_name
 
 def insert_item(item: Item):
+    try:
+
         if not items_file.exists():
             with open(items_file, "w") as file:
                 json.dump({"items": []}, file, indent=4) 
         
         # load the items.json file
         with open(items_file, "r") as file:
-                data = json.load(file)
+            data = json.load(file)
 
         # add a new item to the "items" array
         data["items"].append({"name": item.name, "category": item.category,"image_name": item.image_name})
@@ -156,6 +168,10 @@ def insert_item(item: Item):
         # save the updated data to items.json
         with open(items_file, "w") as file:
             json.dump(data, file, indent=4)
+        return {"message": "Item added successfully", "status": 200}
+    except Exception as e:
+        logger.error(f"Error inserting item: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error saving item data")
         
 
 @app.get("/items/{item_id}", response_model=Item)
