@@ -92,8 +92,7 @@ def get_items():
 async def add_item(
     name: str = Form(...),
     category: str = Form(...),
-    image: UploadFile = File(...), 
-    db: sqlite3.Connection = Depends(get_db),
+  　db: sqlite3.Connection = Depends(get_db),
 ):
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
@@ -104,7 +103,6 @@ async def add_item(
     insert_item(item)
     return AddItemResponse(message=f"Item received: {name}")
 
-    
 
 # get_image is a handler to return an image for GET /images/{filename} .
 @app.get("/image/{image_name}")
@@ -132,6 +130,7 @@ async def hash_and_save_image(image: UploadFile):
     if not image.filename.endswith(".jpg"):
         raise HTTPException(status_code=400, detail="Image path does not end with .jpg")
 
+
     # create an instance of a hash function
     sha256 = hashlib.sha256()
 
@@ -152,6 +151,7 @@ async def hash_and_save_image(image: UploadFile):
     return image_name
 
 def insert_item(item: Item):
+
     try:
 
         if not items_file.exists():
